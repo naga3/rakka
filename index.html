@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Gravity Puzzle 5x5</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: #2c3e50;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden; /* スクロール防止 */
+        }
+        h1 { font-size: 1.5rem; margin-bottom: 10px; }
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            width: 320px;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+        /* ゲーム盤のコンテナ */
+        #game-container {
+            width: 320px;
+            height: 320px;
+            background-color: #34495e;
+            border-radius: 10px;
+            position: relative;
+            overflow: hidden;
+            touch-action: none; /* ブラウザのデフォルトスワイプを無効化 */
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            transition: transform 0.3s ease; /* 回転アニメーション用 */
+        }
+        
+        /* グリッド線（背景） */
+        .grid-bg {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            grid-template-rows: repeat(5, 1fr);
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0; left: 0;
+        }
+        .cell {
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        /* ブロック */
+        .block {
+            width: 60px;
+            height: 60px;
+            position: absolute;
+            border-radius: 8px;
+            box-sizing: border-box;
+            border: 3px solid rgba(0,0,0,0.1);
+            transition: top 0.3s cubic-bezier(0.5, 0, 0.5, 1), left 0.3s cubic-bezier(0.5, 0, 0.5, 1);
+            /* 落下と配置のアニメーション */
+        }
+
+        /* 色定義 */
+        .color-1 { background-color: #e74c3c; box-shadow: inset 0 0 10px rgba(0,0,0,0.2); } /* 赤 */
+        .color-2 { background-color: #3498db; box-shadow: inset 0 0 10px rgba(0,0,0,0.2); } /* 青 */
+        
+        /* メッセージオーバーレイ */
+        #overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        #overlay.visible { visibility: visible; opacity: 1; }
+        button {
+            padding: 10px 20px;
+            font-size: 1.2rem;
+            cursor: pointer;
+            background: #2ecc71;
+            border: none;
+            color: white;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        .controls-hint {
+            margin-top: 20px;
+            font-size: 0.8rem;
+            color: #95a5a6;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Gravity Puzzle</h1>
+    
+    <div class="status-bar">
+        <span id="level-display">Level: 1</span>
+        <span id="moves-display">Moves: 10</span>
+    </div>
+
+    <div id="game-container">
+        <div class="grid-bg" id="grid-bg">
+            </div>
+        <div id="blocks-container">
+            </div>
+        <div id="overlay">
+            <h2 id="overlay-msg">CLEAR!</h2>
+            <button onclick="resetGame()">Retry</button>
+        </div>
+    </div>
+
+    <div class="controls-hint">
+        Swipe or Arrow Keys to Rotate
+    </div>
+
+<script>
+    // --- 設定とデータ ---
+    const GRID_SIZE = 5;
+    const CELL_SIZE = 64; // 320px / 5
+    const MAX_MOVES = 5; // 手数制限（難易度調整用）
+
+    // 0:空, 1:赤, 2:青
+    // 初期ステージデータ（バラバラに配置）
+    const initialMap = [
+        [0, 0, 0, 0, 0],
+        [1, 0, 2, 0, 1],
+        [0, 0, 0, 0, 0],
+        [2, 0, 1, 0, 2],
+        [0, 0, 0, 0, 0]
+    ];
+
+    let grid = [];
+    let moves = MAX_MOVES;
+    let isAnimating = false;
+
+    // --- 初期化 ---
+    function init() {
+        const bg = document.getElementById('grid-bg');
+        bg.innerHTML = '';
+        for(let i=0; i<25; i++) {
+            const div = document.createElement('div');
+            div.className = 'cell';
+            bg.appendChild(div);
+        }
+        resetGame();
+    }
+
+    function resetGame() {
+        // 配列のディープコピー
+        grid = JSON.parse(JSON.stringify(initialMap));
+        moves = MAX_MOVES;
+        isAnimating = false;
+        updateUI();
+        renderBlocks();
+        document.getElementById('overlay').classList.remove('visible');
+        
+        // ゲーム開始時に一度重力を適用して着地させる
+        setTimeout(() => {
+            applyGravity();
+            renderBlocks();
+        }, 100);
+    }
+
+    // --- 描画処理 ---
+    function renderBlocks() {
+        const container = document.getElementById('blocks-container');
+        container.innerHTML = '';
+
+        for(let r=0; r<GRID_SIZE; r++){
+            for(let c=0; c<GRID_SIZE; c++){
+                const val = grid[r][c];
+                if(val !== 0){
+                    const el = document.createElement('div');
+                    el.className = `block color-${val}`;
+                    // CSSのtop/leftで位置を指定
+                    el.style.top = (r * CELL_SIZE) + 'px';
+                    el.style.left = (c * CELL_SIZE) + 'px';
+                    container.appendChild(el);
+                }
+            }
+        }
+    }
+
+    function updateUI() {
+        document.getElementById('moves-display').innerText = `Moves: ${moves}`;
+    }
+
+    // --- ゲームロジック: 回転 ---
+    // direction: 1 (時計回り/右), -1 (反時計回り/左)
+    function rotateBoard(direction) {
+        if (isAnimating || moves <= 0) return;
+        
+        isAnimating = true;
+        moves--;
+        updateUI();
+
+        const newGrid = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
+
+        for(let r=0; r<GRID_SIZE; r++){
+            for(let c=0; c<GRID_SIZE; c++){
+                if (direction === 1) {
+                    // 時計回り: (r, c) -> (c, N-1-r)
+                    newGrid[c][GRID_SIZE - 1 - r] = grid[r][c];
+                } else {
+                    // 反時計回り: (r, c) -> (N-1-c, r)
+                    newGrid[GRID_SIZE - 1 - c][r] = grid[r][c];
+                }
+            }
+        }
+        grid = newGrid;
+
+        // 回転アニメーションっぽく見せるために即時描画
+        renderBlocks();
+
+        // 少し待ってから重力適用（視覚的に回転→落下の順に見せる）
+        setTimeout(() => {
+            applyGravity();
+            renderBlocks();
+            checkWinCondition();
+            isAnimating = false;
+        }, 350);
+    }
+
+    // --- ゲームロジック: 重力 ---
+    function applyGravity() {
+        for(let c=0; c<GRID_SIZE; c++){
+            let stack = [];
+            // 列の下から走査してブロックを拾う
+            for(let r=GRID_SIZE-1; r>=0; r--){
+                if(grid[r][c] !== 0) {
+                    stack.push(grid[r][c]);
+                    grid[r][c] = 0;
+                }
+            }
+            // 下から詰め直す
+            for(let i=0; i<stack.length; i++){
+                grid[GRID_SIZE - 1 - i][c] = stack[i];
+            }
+        }
+    }
+
+    // --- ゲームロジック: クリア判定 (BFS探索) ---
+    function checkWinCondition() {
+        if (checkAllConnected(1) && checkAllConnected(2)) {
+            showOverlay("CLEAR!", true);
+        } else if (moves === 0) {
+            showOverlay("GAME OVER", false);
+        }
+    }
+
+    function showOverlay(msg, isWin) {
+        const ov = document.getElementById('overlay');
+        const h2 = document.getElementById('overlay-msg');
+        h2.innerText = msg;
+        h2.style.color = isWin ? '#2ecc71' : '#e74c3c';
+        ov.classList.add('visible');
+    }
+
+    // 指定したcolorIDのブロックが全て連結しているかチェック
+    function checkAllConnected(colorId) {
+        let blocks = [];
+        // 該当色の全座標を取得
+        for(let r=0; r<GRID_SIZE; r++){
+            for(let c=0; c<GRID_SIZE; c++){
+                if(grid[r][c] === colorId) blocks.push({r, c});
+            }
+        }
+        
+        if(blocks.length === 0) return true; // その色が存在しないなら条件クリアとみなす
+
+        // BFS探索
+        let visited = new Set();
+        let queue = [blocks[0]]; // 最初のブロックからスタート
+        visited.add(`${blocks[0].r},${blocks[0].c}`);
+
+        let count = 0;
+        while(queue.length > 0) {
+            const {r, c} = queue.shift();
+            count++;
+
+            // 上下左右をチェック
+            const dirs = [[0,1], [0,-1], [1,0], [-1,0]];
+            for(let d of dirs) {
+                const nr = r + d[0];
+                const nc = c + d[1];
+                if(nr>=0 && nr<GRID_SIZE && nc>=0 && nc<GRID_SIZE) {
+                    if(grid[nr][nc] === colorId && !visited.has(`${nr},${nc}`)) {
+                        visited.add(`${nr},${nc}`);
+                        queue.push({r: nr, c: nc});
+                    }
+                }
+            }
+        }
+        // 連結していた数と、全体の数が一致すればOK
+        return count === blocks.length;
+    }
+
+    // --- 入力ハンドリング (スワイプ & キーボード) ---
+    let startX = 0;
+    let startY = 0;
+    const gameContainer = document.getElementById('game-container');
+
+    // タッチ開始
+    gameContainer.addEventListener('touchstart', (e) => {
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+    }, {passive: false});
+
+    // タッチ終了
+    gameContainer.addEventListener('touchend', (e) => {
+        const endX = e.changedTouches[0].clientX;
+        const endY = e.changedTouches[0].clientY;
+        const diffX = endX - startX;
+        const diffY = endY - startY;
+
+        // 水平方向の移動量が大きく、垂直方向が小さい場合のみスワイプと判定
+        if (Math.abs(diffX) > 50 && Math.abs(diffY) < 100) {
+            if (diffX > 0) {
+                rotateBoard(1); // 右スワイプ -> 時計回り
+            } else {
+                rotateBoard(-1); // 左スワイプ -> 反時計回り
+            }
+        }
+        e.preventDefault();
+    }, {passive: false});
+
+    // キーボード操作
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight') rotateBoard(1);
+        if (e.key === 'ArrowLeft') rotateBoard(-1);
+    });
+
+    // 実行
+    init();
+
+</script>
+</body>
+</html>
