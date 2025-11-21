@@ -319,6 +319,12 @@
 
     // タッチ終了
     gameContainer.addEventListener('touchend', (e) => {
+        // 【修正】オーバーレイ（リトライ画面）が出ている時は、
+        // ボタンが押せるようにスワイプ判定を無視して何もしない
+        if (document.getElementById('overlay').classList.contains('visible')) {
+            return; 
+        }
+
         const endX = e.changedTouches[0].clientX;
         const endY = e.changedTouches[0].clientY;
         const diffX = endX - startX;
